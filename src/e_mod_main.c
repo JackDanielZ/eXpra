@@ -26,15 +26,19 @@ static E_Module *_module = NULL;
 typedef struct
 {
    unsigned int id;
-   Eina_Stringshare *shot_filename;
+   Eina_Stringshare *screenshot_filename;
+   Ecore_Exe *screenshot_exe;
 } Session_Info;
 
 typedef struct
 {
    Eina_Stringshare *name;
-   unsigned int ttl;
 
    Eina_List *sessions; /* List of Session_Info */
+
+   Ecore_Timer *sessions_get_timer;
+   Ecore_Exe *sessions_get_exe;
+   Eina_Strbuf *sessions_get_buffer;
 } Machine_Info;
 
 typedef struct
@@ -116,7 +120,7 @@ _mkdir(const char *dir)
 }
 
 static void
-_config_init(Instance *inst EINA_UNUSED)
+_config_init(void)
 {
    char path[1024];
 
@@ -155,44 +159,94 @@ _config_shutdown()
 }
 
 static Eina_Bool
-_cmd_end_cb(void *data, int type EINA_UNUSED, void *event)
+_sessions_get_cb(void *data)
 {
-#if 0
+  Machine_Info *mach = data;
+
+  if (!mach->sessions_get_exe)
+  {
+    char cmd[1024];
+
+    sprintf(cmd, "ssh %s xpra list", mach->name);
+    mach->sessions_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_PIPE_READ | ECORE_EXE_PIPE_ERROR, mach);
+    efl_wref_add(mach->sessions_get_exe, &(mach->sessions_get_exe));
+
+    efl_key_data_set(mach->sessions_get_exe, "eXpra_type", "sessions_get");
+  }
+
+  return EINA_TRUE;
+}
+
+static Session_Info *
+_find_session_in_machine_by_id(Machine_Info *mach, unsigned int id)
+{
+  Eina_List *itr;
+  Session_Info *s;
+  EINA_LIST_FOREACH(mach->sessions, itr, s)
+  {
+    if (s->id == id) return s;
+  }
+  s = calloc(1, sizeof(Session_Info));
+  s->id = id;
+  mach->sessions = eina_list_append(mach->sessions, s);
+  return s;
+}
+
+static Eina_Bool
+_cmd_end_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
+{
    Ecore_Exe_Event_Del *event_info = (Ecore_Exe_Event_Del *)event;
    Ecore_Exe *exe = event_info->exe;
-   Image_Info *img = ecore_exe_data_get(exe);
-   if (!img || img->inst != data) return ECORE_CALLBACK_PASS_ON;
-   PRINT("EXE END %p\n", img->exe);
-   free(img->notif_buf);
-   img->notif_buf = NULL;
-   img->notif_buf_len = img->notif_cur_idx = 0;
-#else
-   (void)data;
-   (void)type;
-   (void)event;
-#endif
+   const char *type = efl_key_data_get(exe, "eXpra_type");
+
+   if (!type) return ECORE_CALLBACK_PASS_ON;
+
+   if (!strcmp(type, "sessions_get"))
+   {
+     Machine_Info *mach = ecore_exe_data_get(exe);
+     if (event_info->exit_code == 0)
+     {
+       const char *str_to_find = "LIVE session at :";
+       char *p = strstr(eina_strbuf_string_get(mach->sessions_get_buffer), str_to_find);
+       while (p)
+       {
+         Session_Info *session;
+         unsigned int id = 0;
+         p += strlen(str_to_find);
+         id = strtol(p, NULL, 10);
+
+         session = _find_session_in_machine_by_id(mach, id);
+         if (!session->screenshot_exe)
+         {
+         }
+
+         p = strstr(p, str_to_find);
+       }
+       eina_strbuf_reset(mach->sessions_get_buffer);
+     }
+     else
+     {
+       // Delete all the sessions and GUI objects related to the machine
+     }
+   }
    return ECORE_CALLBACK_DONE;
 }
 
 static Eina_Bool
-_cmd_output_cb(void *data, int type, void *event)
+_cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
 {
-#if 0
-   char buf_icon[1024];
-   char output_buf[1024];
    Ecore_Exe_Event_Data *event_data = (Ecore_Exe_Event_Data *)event;
-   const char *begin = event_data->data;
    Ecore_Exe *exe = event_data->exe;
-   Image_Info *img = ecore_exe_data_get(exe);
-   if (!img || img->inst != data) return ECORE_CALLBACK_PASS_ON;
+   const char *type = efl_key_data_get(exe, "eXpra_type");
 
-   snprintf(buf_icon, sizeof(buf_icon), "%s/icon.png", e_module_dir_get(_module));
-   PRINT(begin);
-#else
-   (void)data;
-   (void)type;
-   (void)event;
-#endif
+   if (!type) return ECORE_CALLBACK_PASS_ON;
+
+   if (!strcmp(type, "sessions_get"))
+   {
+     Machine_Info *mach = ecore_exe_data_get(exe);
+     eina_strbuf_append(mach->sessions_get_buffer, event_data->data);
+   }
+
    return ECORE_CALLBACK_DONE;
 }
 
@@ -282,12 +336,13 @@ _gc_init(E_Gadcon *gc, const char *name, const char *id, const char *style)
    Instance *inst;
    E_Gadcon_Client *gcc;
    char buf[4096];
+   Eina_List *itr;
+   Eina_Stringshare *mach_name;
 
-   inst = _instance_create();
-   _config_init(inst);
-
+   _config_init();
    snprintf(buf, sizeof(buf), "%s/icon.png", e_module_dir_get(_module));
 
+   inst = _instance_create();
    inst->o_icon = _icon_create(gc->evas, buf, NULL);
 
    gcc = e_gadcon_client_new(gc, name, id, style, inst->o_icon);
@@ -300,6 +355,18 @@ _gc_init(E_Gadcon *gc, const char *name, const char *id, const char *style)
    ecore_event_handler_add(ECORE_EXE_EVENT_DATA, _cmd_output_cb, inst);
    ecore_event_handler_add(ECORE_EXE_EVENT_ERROR, _cmd_output_cb, inst);
    ecore_event_handler_add(ECORE_EXE_EVENT_DEL, _cmd_end_cb, inst);
+
+   EINA_LIST_FOREACH(_config->machine_names, itr, mach_name)
+   {
+     Machine_Info *mach = calloc(1, sizeof(*mach));
+     mach->name = eina_stringshare_add(mach_name);
+     mach->sessions_get_timer = ecore_timer_add(10.0, _sessions_get_cb, mach);
+     mach->sessions_get_buffer = eina_strbuf_new();
+
+     _sessions_get_cb(mach);
+
+     inst->machs = eina_list_append(inst->machs, mach);
+   }
 
    return gcc;
 }
