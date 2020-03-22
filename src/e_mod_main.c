@@ -34,7 +34,8 @@ typedef struct
 
    Eo *screenshot_icon;
 
-   Eina_Bool screenshot_available : 1;
+   Eina_Bool screenshot_available :1;
+   Eina_Bool to_delete :1;
 } Session_Info;
 
 typedef struct
@@ -315,6 +316,19 @@ _kill_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED)
 }
 
 static void
+_session_free(Session_Info *session)
+{
+   eina_stringshare_del(session->machine_name);
+
+   efl_del(session->screenshot_get_exe);
+   ecore_timer_del(session->screenshot_timer);
+
+   efl_del(session->screenshot_icon);
+
+   free(session);
+}
+
+static void
 _box_update(Instance *inst)
 {
 #define NB_COLS_PER_ELT 10
@@ -331,7 +345,7 @@ _box_update(Instance *inst)
   total_colums = ( total_colums * NB_COLS_PER_ELT ) + ( total_colums - 1 );
   total_rows += ( total_rows - 1 );
 
-  elm_table_clear(inst->table, EINA_TRUE);
+  efl_del(inst->table);
 
   (void)total_colums;
 
@@ -372,7 +386,6 @@ _box_update(Instance *inst)
       elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, NULL, _detach_cb, session));
       elm_box_pack_end(o2, _button_create(o2, "Kill", NULL, NULL, _kill_cb, session));
       elm_box_pack_end(o, o2);
-      PRINT("%s\n", session->screenshot_tmp_file);
 
       if (column >= total_colums)
       {
@@ -452,8 +465,9 @@ _find_session_in_machine_by_id(Machine_Info *mach, unsigned int id)
 }
 
 static Eina_Bool
-_cmd_end_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
+_cmd_end_cb(void *data, int _type EINA_UNUSED, void *event)
 {
+   Instance *inst = data;
    Ecore_Exe_Event_Del *event_info = (Ecore_Exe_Event_Del *)event;
    Ecore_Exe *exe = event_info->exe;
    const char *type = efl_key_data_get(exe, "eXpra_type");
@@ -465,30 +479,44 @@ _cmd_end_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
      Machine_Info *mach = ecore_exe_data_get(exe);
      if (event_info->exit_code == 0)
      {
+       Eina_List *itr, *itr2;
+       Eina_Bool has_changed = EINA_FALSE;
+       Session_Info *session;
        const char *str_to_find = "LIVE session at :";
        char *p = strstr(eina_strbuf_string_get(mach->sessions_get_buffer), str_to_find);
+
+       EINA_LIST_FOREACH(mach->sessions, itr, session) session->to_delete = EINA_TRUE;
+
        while (p)
        {
-         Session_Info *session;
          unsigned int id = 0;
          p += strlen(str_to_find);
          id = strtol(p, NULL, 10);
 
          session = _find_session_in_machine_by_id(mach, id);
+         session->to_delete = EINA_FALSE;
          if (!session->screenshot_timer)
          {
            session->screenshot_timer = ecore_timer_add(60.0, _screenshot_get_cb, session);
            efl_wref_add(session->screenshot_timer, &(session->screenshot_timer));
            _screenshot_get_cb(session);
+           has_changed = EINA_TRUE;
          }
 
          p = strstr(p, str_to_find);
        }
        eina_strbuf_reset(mach->sessions_get_buffer);
-     }
-     else
-     {
-       // Delete all the sessions and GUI objects related to the machine
+
+       EINA_LIST_FOREACH_SAFE(mach->sessions, itr, itr2, session)
+       {
+         if (session->to_delete) {
+           has_changed = EINA_TRUE;
+           mach->sessions = eina_list_remove(mach->sessions, session);
+           _session_free(session);
+         }
+       }
+
+       if (has_changed) _box_update(inst);
      }
    }
    else if (!strcmp(type, "screenshot_get"))
