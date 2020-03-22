@@ -25,9 +25,16 @@ static E_Module *_module = NULL;
 
 typedef struct
 {
+   Eina_Stringshare *machine_name;
    unsigned int id;
-   Eina_Stringshare *screenshot_filename;
-   Ecore_Exe *screenshot_exe;
+
+   Eina_Tmpstr *screenshot_tmp_file;
+   Ecore_Exe *screenshot_get_exe;
+   Ecore_Timer *screenshot_timer;
+
+   Eo *screenshot_icon;
+
+   Eina_Bool screenshot_available : 1;
 } Session_Info;
 
 typedef struct
@@ -44,14 +51,19 @@ typedef struct
 typedef struct
 {
    E_Gadcon_Client *gcc;
+   E_Gadcon_Popup *popup;
+
    Evas_Object *o_icon;
 
    Eina_List *machs; /* List of Machine_Info */
+
+   Eo *main_box;
+   Eo *table;
 } Instance;
 
 typedef struct
 {
-   Eina_List *machine_names;
+   Eina_List *machine_names; /* List of strings */
 } Config;
 
 static Config *_config = NULL;
@@ -158,98 +170,6 @@ _config_shutdown()
    _config = NULL;
 }
 
-static Eina_Bool
-_sessions_get_cb(void *data)
-{
-  Machine_Info *mach = data;
-
-  if (!mach->sessions_get_exe)
-  {
-    char cmd[1024];
-
-    sprintf(cmd, "ssh %s xpra list", mach->name);
-    mach->sessions_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_PIPE_READ | ECORE_EXE_PIPE_ERROR, mach);
-    efl_wref_add(mach->sessions_get_exe, &(mach->sessions_get_exe));
-
-    efl_key_data_set(mach->sessions_get_exe, "eXpra_type", "sessions_get");
-  }
-
-  return EINA_TRUE;
-}
-
-static Session_Info *
-_find_session_in_machine_by_id(Machine_Info *mach, unsigned int id)
-{
-  Eina_List *itr;
-  Session_Info *s;
-  EINA_LIST_FOREACH(mach->sessions, itr, s)
-  {
-    if (s->id == id) return s;
-  }
-  s = calloc(1, sizeof(Session_Info));
-  s->id = id;
-  mach->sessions = eina_list_append(mach->sessions, s);
-  return s;
-}
-
-static Eina_Bool
-_cmd_end_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
-{
-   Ecore_Exe_Event_Del *event_info = (Ecore_Exe_Event_Del *)event;
-   Ecore_Exe *exe = event_info->exe;
-   const char *type = efl_key_data_get(exe, "eXpra_type");
-
-   if (!type) return ECORE_CALLBACK_PASS_ON;
-
-   if (!strcmp(type, "sessions_get"))
-   {
-     Machine_Info *mach = ecore_exe_data_get(exe);
-     if (event_info->exit_code == 0)
-     {
-       const char *str_to_find = "LIVE session at :";
-       char *p = strstr(eina_strbuf_string_get(mach->sessions_get_buffer), str_to_find);
-       while (p)
-       {
-         Session_Info *session;
-         unsigned int id = 0;
-         p += strlen(str_to_find);
-         id = strtol(p, NULL, 10);
-
-         session = _find_session_in_machine_by_id(mach, id);
-         if (!session->screenshot_exe)
-         {
-         }
-
-         p = strstr(p, str_to_find);
-       }
-       eina_strbuf_reset(mach->sessions_get_buffer);
-     }
-     else
-     {
-       // Delete all the sessions and GUI objects related to the machine
-     }
-   }
-   return ECORE_CALLBACK_DONE;
-}
-
-static Eina_Bool
-_cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
-{
-   Ecore_Exe_Event_Data *event_data = (Ecore_Exe_Event_Data *)event;
-   Ecore_Exe *exe = event_data->exe;
-   const char *type = efl_key_data_get(exe, "eXpra_type");
-
-   if (!type) return ECORE_CALLBACK_PASS_ON;
-
-   if (!strcmp(type, "sessions_get"))
-   {
-     Machine_Info *mach = ecore_exe_data_get(exe);
-     eina_strbuf_append(mach->sessions_get_buffer, event_data->data);
-   }
-
-   return ECORE_CALLBACK_DONE;
-}
-
 static Eo *
 _icon_create(Eo *parent, const char *path, Eo **wref)
 {
@@ -257,6 +177,8 @@ _icon_create(Eo *parent, const char *path, Eo **wref)
    if (!ic)
      {
         ic = elm_icon_add(parent);
+        evas_object_size_hint_weight_set(ic, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+        evas_object_size_hint_align_set(ic, EVAS_HINT_FILL, EVAS_HINT_FILL);
         elm_icon_standard_set(ic, path);
         evas_object_show(ic);
         if (wref) efl_wref_add(ic, wref);
@@ -264,7 +186,36 @@ _icon_create(Eo *parent, const char *path, Eo **wref)
    return ic;
 }
 
-#if 0
+static Eo *
+_image_create(Eo *parent, const char *path, Eo **wref)
+{
+   Eo *o = wref ? *wref : NULL;
+   if (!o)
+   {
+     o = elm_image_add(parent);
+     evas_object_size_hint_weight_set(o, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+     evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
+     evas_object_size_hint_aspect_set(o, EVAS_ASPECT_CONTROL_BOTH, 1, 1);
+     elm_image_preload_disabled_set(o, EINA_FALSE);
+     if (path) elm_image_file_set(o, path, NULL);
+     if (wref) efl_wref_add(o, wref);
+     evas_object_show(o);
+   }
+   return o;
+}
+
+static Eo *
+_box_create(Eo *parent, Eina_Bool horiz, Eo **wref)
+{
+   Eo *o = elm_box_add(parent);
+   elm_box_horizontal_set(o, horiz);
+   evas_object_size_hint_weight_set(o, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+   evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
+   efl_gfx_entity_visible_set(o, EINA_TRUE);
+   if (wref) efl_wref_add(o, wref);
+   return o;
+}
+
 static Eo *
 _label_create(Eo *parent, const char *text, Eo **wref)
 {
@@ -298,7 +249,247 @@ _button_create(Eo *parent, const char *text, Eo *icon, Eo **wref, Evas_Smart_Cb 
    elm_object_part_content_set(bt, "icon", icon);
    return bt;
 }
-#endif
+
+static Eo *
+_separator_create(Eo *parent, Eina_Bool horiz, Eo **wref)
+{
+   Eo *sp = wref ? *wref : NULL;
+   if (!sp)
+     {
+        sp = elm_separator_add(parent);
+        elm_separator_horizontal_set(sp, horiz);
+        evas_object_show(sp);
+        if (wref) efl_wref_add(sp, wref);
+     }
+   return sp;
+}
+
+static void
+_table_dimensions_get(Instance *inst, unsigned int *rows, unsigned int *colums)
+{
+  Eina_List *itr;
+  unsigned int count = 0;
+  Machine_Info *mach;
+  EINA_LIST_FOREACH(inst->machs, itr, mach)
+  {
+    count += eina_list_count(mach->sessions);
+  }
+  *rows = 0;
+  *colums = 0;
+  while (*rows * *colums < count)
+  {
+    *rows += 1;
+    if (*rows * *colums < count) *colums += 1;
+  }
+  PRINT("Table: %d -> %dx%d\n", count, *rows, *colums);
+}
+
+static void
+_box_update(Instance *inst)
+{
+#define NB_COLS_PER_ELT 10
+
+  Eo *o, *o2;
+  Machine_Info *mach;
+  Eina_List *itr1, *itr2;
+  unsigned int total_rows = 0, total_colums = 0, row = 0, column = 0;
+
+  if (!inst->main_box) return;
+
+  _table_dimensions_get(inst, &total_rows, &total_colums);
+
+  total_colums = ( total_colums * NB_COLS_PER_ELT ) + ( total_colums - 1 );
+  total_rows += ( total_rows - 1 );
+
+  elm_table_clear(inst->table, EINA_TRUE);
+
+  (void)total_colums;
+
+  o = elm_table_add(inst->main_box);
+  evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
+  evas_object_size_hint_weight_set(o, EVAS_HINT_EXPAND, 0.0);
+  elm_table_padding_set(o, 20, 0);
+  elm_box_pack_end(inst->main_box, o);
+  evas_object_show(o);
+  efl_wref_add(o, &inst->table);
+
+  EINA_LIST_FOREACH(inst->machs, itr1, mach)
+  {
+    Session_Info *session;
+    EINA_LIST_FOREACH(mach->sessions, itr2, session)
+    {
+      char id_str[256];
+      sprintf(id_str, "%s:%d", session->machine_name, session->id);
+      o = _box_create(inst->table, EINA_TRUE, NULL);
+      elm_table_pack(inst->table, o, column, row, NB_COLS_PER_ELT, 1);
+      column += NB_COLS_PER_ELT;
+      elm_box_pack_end(o, _image_create(o, NULL, &(session->screenshot_icon)));
+      if (session->screenshot_available)
+      {
+        elm_image_file_set(session->screenshot_icon, session->screenshot_tmp_file, NULL);
+      }
+      else
+      {
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "%s/not_available.png", e_module_dir_get(_module));
+        elm_image_file_set(session->screenshot_icon, buf, NULL);
+      }
+      o2 = _box_create(o, EINA_FALSE, NULL);
+      elm_box_pack_end(o, o2);
+      elm_box_pack_end(o2, _label_create(o2, id_str, NULL));
+      o2 = _box_create(o, EINA_FALSE, NULL);
+      elm_box_pack_end(o2, _button_create(o2, "Attach", NULL, NULL, NULL, NULL));
+      elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, NULL, NULL, NULL));
+      elm_box_pack_end(o2, _button_create(o2, "Kill", NULL, NULL, NULL, NULL));
+      elm_box_pack_end(o, o2);
+      PRINT("%s\n", session->screenshot_tmp_file);
+
+      if (column >= total_colums)
+      {
+        row++;
+        elm_table_pack(inst->table, _separator_create(inst->table, EINA_TRUE, NULL), 0, row, total_colums, 1);
+        row++;
+        column = 0;
+      }
+      else {
+        elm_table_pack(inst->table, _separator_create(inst->table, EINA_FALSE, NULL), column, row, 1, 1);
+        column++;
+      }
+    }
+  }
+}
+
+static Eina_Bool
+_sessions_get_cb(void *data)
+{
+  Machine_Info *mach = data;
+
+  if (!mach->sessions_get_exe)
+  {
+    char cmd[1024];
+
+    sprintf(cmd, "ssh %s xpra list", mach->name);
+    mach->sessions_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_PIPE_READ | ECORE_EXE_PIPE_ERROR, mach);
+    efl_wref_add(mach->sessions_get_exe, &(mach->sessions_get_exe));
+
+    efl_key_data_set(mach->sessions_get_exe, "eXpra_type", "sessions_get");
+  }
+
+  return EINA_TRUE;
+}
+
+static Eina_Bool
+_screenshot_get_cb(void *data)
+{
+  Session_Info *session = data;
+
+  if (!session->screenshot_get_exe)
+  {
+    char cmd[1024];
+    int fd;
+
+    if (session->screenshot_tmp_file) unlink(session->screenshot_tmp_file);
+
+    fd = eina_file_mkstemp("xpra_shot_XXXXXX.png", &(session->screenshot_tmp_file));
+    if (fd < 0) return EINA_TRUE;
+    close(fd);
+
+    sprintf(cmd, "xpra screenshot %s ssh://%s/%d",
+        session->screenshot_tmp_file, session->machine_name, session->id);
+    session->screenshot_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, session);
+    efl_wref_add(session->screenshot_get_exe, &(session->screenshot_get_exe));
+
+    efl_key_data_set(session->screenshot_get_exe, "eXpra_type", "screenshot_get");
+  }
+
+  return EINA_TRUE;
+}
+
+static Session_Info *
+_find_session_in_machine_by_id(Machine_Info *mach, unsigned int id)
+{
+  Eina_List *itr;
+  Session_Info *s;
+  EINA_LIST_FOREACH(mach->sessions, itr, s)
+  {
+    if (s->id == id) return s;
+  }
+  s = calloc(1, sizeof(Session_Info));
+  s->id = id;
+  s->machine_name = eina_stringshare_add(mach->name);
+  mach->sessions = eina_list_append(mach->sessions, s);
+  return s;
+}
+
+static Eina_Bool
+_cmd_end_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
+{
+   Ecore_Exe_Event_Del *event_info = (Ecore_Exe_Event_Del *)event;
+   Ecore_Exe *exe = event_info->exe;
+   const char *type = efl_key_data_get(exe, "eXpra_type");
+
+   if (!type) return ECORE_CALLBACK_PASS_ON;
+
+   if (!strcmp(type, "sessions_get"))
+   {
+     Machine_Info *mach = ecore_exe_data_get(exe);
+     if (event_info->exit_code == 0)
+     {
+       const char *str_to_find = "LIVE session at :";
+       char *p = strstr(eina_strbuf_string_get(mach->sessions_get_buffer), str_to_find);
+       while (p)
+       {
+         Session_Info *session;
+         unsigned int id = 0;
+         p += strlen(str_to_find);
+         id = strtol(p, NULL, 10);
+
+         session = _find_session_in_machine_by_id(mach, id);
+         if (!session->screenshot_timer)
+         {
+           session->screenshot_timer = ecore_timer_add(60.0, _screenshot_get_cb, session);
+           efl_wref_add(session->screenshot_timer, &(session->screenshot_timer));
+           _screenshot_get_cb(session);
+         }
+
+         p = strstr(p, str_to_find);
+       }
+       eina_strbuf_reset(mach->sessions_get_buffer);
+     }
+     else
+     {
+       // Delete all the sessions and GUI objects related to the machine
+     }
+   }
+   else if (!strcmp(type, "screenshot_get"))
+   {
+     Session_Info *session = ecore_exe_data_get(exe);
+     if (event_info->exit_code == 0)
+     {
+       elm_image_file_set(session->screenshot_icon, session->screenshot_tmp_file, NULL);
+       session->screenshot_available = EINA_TRUE;
+     }
+   }
+   return ECORE_CALLBACK_DONE;
+}
+
+static Eina_Bool
+_cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
+{
+   Ecore_Exe_Event_Data *event_data = (Ecore_Exe_Event_Data *)event;
+   Ecore_Exe *exe = event_data->exe;
+   const char *type = efl_key_data_get(exe, "eXpra_type");
+
+   if (!type) return ECORE_CALLBACK_PASS_ON;
+
+   if (!strcmp(type, "sessions_get"))
+   {
+     Machine_Info *mach = ecore_exe_data_get(exe);
+     eina_strbuf_append(mach->sessions_get_buffer, event_data->data);
+   }
+
+   return ECORE_CALLBACK_DONE;
+}
 
 static Instance *
 _instance_create()
@@ -317,7 +508,27 @@ _instance_delete(Instance *inst)
 }
 
 static void
-_button_cb_mouse_down(void *data EINA_UNUSED, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
+_popup_del(Instance *inst)
+{
+   E_FREE_FUNC(inst->popup, e_object_del);
+}
+
+static void
+_popup_del_cb(void *obj)
+{
+   _popup_del(e_object_data_get(obj));
+}
+
+static void
+_popup_comp_del_cb(void *data, Evas_Object *obj EINA_UNUSED)
+{
+   Instance *inst = data;
+
+   E_FREE_FUNC(inst->popup, e_object_del);
+}
+
+static void
+_button_cb_mouse_down(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
 {
 //   Instance *inst;
    Evas_Event_Mouse_Down *ev;
@@ -325,9 +536,30 @@ _button_cb_mouse_down(void *data EINA_UNUSED, Evas *e EINA_UNUSED, Evas_Object *
 //   inst = data;
    ev = event_info;
 
-   if (ev->button == 3)
+   if (ev->button == 1)
+   {
+     Instance *inst = data;
+     if (!inst->popup)
      {
+       Evas_Object *o;
+       inst->popup = e_gadcon_popup_new(inst->gcc, 0);
+
+       o = elm_box_add(e_comp->elm);
+       evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
+       evas_object_size_hint_weight_set(o, EVAS_HINT_EXPAND, 0.0);
+       evas_object_show(o);
+       efl_wref_add(o, &inst->main_box);
+
+       _box_update(inst);
+
+       e_gadcon_popup_content_set(inst->popup, inst->main_box);
+       e_comp_object_util_autoclose(inst->popup->comp_object,
+           _popup_comp_del_cb, NULL, inst);
+       e_gadcon_popup_show(inst->popup);
+       e_object_data_set(E_OBJECT(inst->popup), inst);
+       E_OBJECT_DEL_SET(inst->popup, _popup_del_cb);
      }
+   }
 }
 
 static E_Gadcon_Client *

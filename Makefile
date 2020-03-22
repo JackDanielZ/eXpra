@@ -17,7 +17,7 @@ install: src/module.so
 	sudo mkdir -p $(prefix)'/lib/enlightenment/modules/eXpra/'$(MODULE_ARCH)
 	sudo install -c src/module.so $(prefix)/lib/enlightenment/modules/eXpra/$(MODULE_ARCH)/module.so
 	sudo install -c module.desktop $(prefix)/lib/enlightenment/modules/eXpra/module.desktop
-	sudo install -c -m 644 images/icon.png $(prefix)/lib/enlightenment/modules/eXpra
+	sudo install -c -m 644 images/* $(prefix)/lib/enlightenment/modules/eXpra
 
 clean:
 	rm -rf src/module.so src/e_mod_main.o
