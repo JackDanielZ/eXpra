@@ -285,6 +285,36 @@ _table_dimensions_get(Instance *inst, unsigned int *rows, unsigned int *colums)
 }
 
 static void
+_attach_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED)
+{
+  char cmd[256];
+  Session_Info *session = data;
+
+  sprintf(cmd, "xpra attach ssh://%s/%d", session->machine_name, session->id);
+  ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, NULL);
+}
+
+static void
+_detach_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED)
+{
+  char cmd[256];
+  Session_Info *session = data;
+
+  sprintf(cmd, "xpra detach ssh://%s/%d", session->machine_name, session->id);
+  ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, NULL);
+}
+
+static void
+_kill_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED)
+{
+  char cmd[256];
+  Session_Info *session = data;
+
+  sprintf(cmd, "xpra stop ssh://%s/%d", session->machine_name, session->id);
+  ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, NULL);
+}
+
+static void
 _box_update(Instance *inst)
 {
 #define NB_COLS_PER_ELT 10
@@ -338,9 +368,9 @@ _box_update(Instance *inst)
       elm_box_pack_end(o, o2);
       elm_box_pack_end(o2, _label_create(o2, id_str, NULL));
       o2 = _box_create(o, EINA_FALSE, NULL);
-      elm_box_pack_end(o2, _button_create(o2, "Attach", NULL, NULL, NULL, NULL));
-      elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, NULL, NULL, NULL));
-      elm_box_pack_end(o2, _button_create(o2, "Kill", NULL, NULL, NULL, NULL));
+      elm_box_pack_end(o2, _button_create(o2, "Attach", NULL, NULL, _attach_cb, session));
+      elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, NULL, _detach_cb, session));
+      elm_box_pack_end(o2, _button_create(o2, "Kill", NULL, NULL, _kill_cb, session));
       elm_box_pack_end(o, o2);
       PRINT("%s\n", session->screenshot_tmp_file);
 
