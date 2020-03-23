@@ -31,8 +31,11 @@ typedef struct
    Eina_Tmpstr *screenshot_tmp_file;
    Ecore_Exe *screenshot_get_exe;
    Ecore_Timer *screenshot_timer;
+   Ecore_Exe *attach_exe;
 
    Eo *screenshot_icon;
+   Eo *attach_bt;
+   Eo *detach_bt;
 
    Eina_Bool screenshot_available :1;
    Eina_Bool to_delete :1;
@@ -292,7 +295,11 @@ _attach_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED
   Session_Info *session = data;
 
   sprintf(cmd, "xpra attach ssh://%s/%d", session->machine_name, session->id);
-  ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, NULL);
+  session->attach_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, session);
+  efl_wref_add(session->attach_exe, &(session->attach_exe));
+
+  elm_object_disabled_set(session->attach_bt, EINA_TRUE);
+  elm_object_disabled_set(session->detach_bt, EINA_FALSE);
 }
 
 static void
@@ -303,6 +310,9 @@ _detach_cb(void *data, Evas_Object *bt EINA_UNUSED, void *event_info EINA_UNUSED
 
   sprintf(cmd, "xpra detach ssh://%s/%d", session->machine_name, session->id);
   ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, NULL);
+
+  elm_object_disabled_set(session->attach_bt, EINA_FALSE);
+  elm_object_disabled_set(session->detach_bt, EINA_TRUE);
 }
 
 static void
@@ -382,8 +392,16 @@ _box_update(Instance *inst)
       elm_box_pack_end(o, o2);
       elm_box_pack_end(o2, _label_create(o2, id_str, NULL));
       o2 = _box_create(o, EINA_FALSE, NULL);
-      elm_box_pack_end(o2, _button_create(o2, "Attach", NULL, NULL, _attach_cb, session));
-      elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, NULL, _detach_cb, session));
+      elm_box_pack_end(o2, _button_create(o2, "Attach", NULL, &(session->attach_bt), _attach_cb, session));
+      elm_box_pack_end(o2, _button_create(o2, "Detach", NULL, &(session->detach_bt), _detach_cb, session));
+      if (session->attach_exe)
+      {
+        elm_object_disabled_set(session->attach_bt, EINA_TRUE);
+      }
+      else
+      {
+        elm_object_disabled_set(session->detach_bt, EINA_TRUE);
+      }
       elm_box_pack_end(o2, _button_create(o2, "Kill", NULL, NULL, _kill_cb, session));
       elm_box_pack_end(o, o2);
 
