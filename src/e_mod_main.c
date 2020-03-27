@@ -63,6 +63,7 @@ typedef struct
 
    Eo *main_box;
    Eo *table;
+   E_Dialog *screenshot_dialog;
 } Instance;
 
 typedef struct
@@ -285,7 +286,60 @@ _table_dimensions_get(Instance *inst, unsigned int *rows, unsigned int *colums)
     *rows += 1;
     if (*rows * *colums < count) *colums += 1;
   }
-  PRINT("Table: %d -> %dx%d\n", count, *rows, *colums);
+}
+
+static void
+_screenshot_mouse_in_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
+{
+  Session_Info *session = data;
+  Instance *inst;
+  E_Dialog *dialog;
+  Evas *evas;
+  Evas_Object *img;
+  int mw, mh;
+  int w, h;
+
+  inst = efl_key_data_get(session->screenshot_icon, "instance");
+  if (inst->screenshot_dialog) return;
+  PRINT("MOUSE IN\n");
+
+  inst->screenshot_dialog = dialog = e_dialog_new(NULL, "E", "connman_request_input");
+  if (!dialog) return;
+
+  e_dialog_resizable_set(dialog, 1);
+
+  e_dialog_title_set(dialog, "Input requested");
+  e_dialog_border_icon_set(dialog, "dialog-ask");
+
+  evas = evas_object_evas_get(dialog->win);
+  ecore_evas_screen_geometry_get(ecore_evas_ecore_evas_get(evas), NULL, NULL, &w, &h);
+
+  img = e_widget_image_add_from_file(evas, session->screenshot_tmp_file, 0.8 * w, 0.8 * h);
+  evas_object_show(img);
+
+  e_widget_size_min_get(img, &mw, &mh);
+
+  if (mw < 260) mw = 260;
+  if (mh < 130) mh = 130;
+  e_dialog_content_set(dialog, img, mw, mh);
+
+  e_dialog_show(dialog);
+
+  e_dialog_button_focus_num(dialog, 0);
+//  elm_win_center(dialog->win, 1, 1);
+  elm_win_size_base_set(dialog->win, 0.8 * w, 0.8 * h);
+  elm_win_borderless_set(dialog->win, EINA_TRUE);
+}
+
+static void
+_screenshot_mouse_out_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
+{
+  Session_Info *session = data;
+  Instance *inst = efl_key_data_get(session->screenshot_icon, "instance");
+  PRINT("MOUSE OUT\n");
+
+  e_object_del(E_OBJECT(inst->screenshot_dialog));
+  inst->screenshot_dialog = NULL;
 }
 
 static void
@@ -378,6 +432,13 @@ _box_update(Instance *inst)
       elm_table_pack(inst->table, o, column, row, NB_COLS_PER_ELT, 1);
       column += NB_COLS_PER_ELT;
       elm_box_pack_end(o, _image_create(o, NULL, &(session->screenshot_icon)));
+      efl_key_data_set(session->screenshot_icon, "instance", inst);
+
+      evas_object_event_callback_add(session->screenshot_icon, EVAS_CALLBACK_MOUSE_IN,
+          _screenshot_mouse_in_cb, session);
+      evas_object_event_callback_add(session->screenshot_icon, EVAS_CALLBACK_MOUSE_OUT,
+          _screenshot_mouse_out_cb, session);
+
       if (session->screenshot_available)
       {
         elm_image_file_set(session->screenshot_icon, session->screenshot_tmp_file, NULL);

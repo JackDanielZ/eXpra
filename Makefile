@@ -1,6 +1,6 @@
 default: install
 
-CFLAGS := -Wall -Wextra -Werror -Wshadow -Wno-type-limits -g3 -O0 -Wpointer-arith -fvisibility=hidden
+CFLAGS := -Wall -Wextra -Wshadow -Wno-type-limits -g3 -O0 -Wpointer-arith -fvisibility=hidden
 
 prefix:=$(shell pkg-config --variable=prefix enlightenment)
 release=$(shell pkg-config --variable=release enlightenment)
