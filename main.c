@@ -644,7 +644,15 @@ int main(int argc, char **argv)
      inst->machs = eina_list_append(inst->machs, mach);
    }
 
-   win = elm_win_add(NULL, "main", ELM_WIN_BASIC);
+   win = elm_win_add(NULL, "main", ELM_WIN_SOCKET_IMAGE);
+
+   if (!elm_win_socket_listen(win, "ezplug@" APP_NAME, 0, EINA_FALSE))
+     {
+        printf("Fail to elm win socket listen \n");
+        evas_object_del(win);
+        goto exit;
+     }
+   elm_win_autodel_set(win, EINA_TRUE);
 
    inst->main_box = elm_box_add(win);
    evas_object_size_hint_align_set(inst->main_box, EVAS_HINT_FILL, EVAS_HINT_FILL);
@@ -654,10 +662,12 @@ int main(int argc, char **argv)
 
    _box_update(inst);
 
+   evas_object_resize(win, 10, 10);
    evas_object_show(win);
 
    elm_run();
 
+exit:
    free(inst);
    _config_shutdown();
 
