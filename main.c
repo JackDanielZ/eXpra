@@ -634,7 +634,7 @@ int main(int argc, char **argv)
    Instance *inst;
    Eina_List *itr;
    Eina_Stringshare *mach_name;
-   Eo *win;
+   Eo *win, *bg;
 
    ecore_init();
    ecore_con_init();
@@ -665,6 +665,12 @@ int main(int argc, char **argv)
    }
 
    win = elm_win_add(NULL, "main", ELM_WIN_SOCKET_IMAGE);
+
+   bg = elm_bg_add(win);
+   evas_object_size_hint_weight_set(bg, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+   evas_object_size_hint_align_set(bg, EVAS_HINT_FILL, EVAS_HINT_FILL);
+   evas_object_show(bg);
+   elm_win_resize_object_add(win, bg);
 
    if (!elm_win_socket_listen(win, "ezplug@" APP_NAME, 0, EINA_FALSE))
      {
