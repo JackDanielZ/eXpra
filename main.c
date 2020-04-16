@@ -10,18 +10,14 @@
 #include <ctype.h>
 #include <syslog.h>
 
-#include <e.h>
 #include <Eina.h>
 #include <Ecore.h>
 #include <Ecore_Con.h>
-
-#include "e_mod_main.h"
+#include <Elementary.h>
 
 #define _EET_ENTRY "config"
 
 #define PRINT _printf
-
-static E_Module *_module = NULL;
 
 typedef struct
 {
@@ -54,16 +50,13 @@ typedef struct
 
 typedef struct
 {
-   E_Gadcon_Client *gcc;
-   E_Gadcon_Popup *popup;
-
    Evas_Object *o_icon;
 
    Eina_List *machs; /* List of Machine_Info */
 
    Eo *main_box;
    Eo *table;
-   E_Dialog *screenshot_dialog;
+   Eo *screenshot_win;
 } Instance;
 
 typedef struct
@@ -85,7 +78,7 @@ _printf(const char *fmt, ...)
    if (!fp)
      {
         char path[1024];
-        sprintf(path, "%s/eXpra/log", efreet_config_home_get());
+        sprintf(path, "%s/"APP_NAME"/log", efreet_config_home_get());
         fp = fopen(path, "a");
      }
 
@@ -114,7 +107,7 @@ static void
 _config_save()
 {
    char path[1024];
-   sprintf(path, "%s/eXpra/config", efreet_config_home_get());
+   sprintf(path, "%s/"APP_NAME"/config", efreet_config_home_get());
    _config_eet_load();
    Eet_File *file = eet_open(path, EET_FILE_MODE_WRITE);
    eet_data_write(file, _config_edd, _EET_ENTRY, _config, EINA_TRUE);
@@ -141,11 +134,11 @@ _config_init(void)
 {
    char path[1024];
 
-   sprintf(path, "%s/eXpra", efreet_config_home_get());
+   sprintf(path, "%s/"APP_NAME, efreet_config_home_get());
    if (!_mkdir(path)) return;
 
    _config_eet_load();
-   sprintf(path, "%s/eXpra/config", efreet_config_home_get());
+   sprintf(path, "%s/"APP_NAME"/config", efreet_config_home_get());
    Eet_File *file = eet_open(path, EET_FILE_MODE_READ);
    if (!file)
    {
@@ -173,22 +166,6 @@ _config_shutdown()
    }
    free(_config);
    _config = NULL;
-}
-
-static Eo *
-_icon_create(Eo *parent, const char *path, Eo **wref)
-{
-   Eo *ic = wref ? *wref : NULL;
-   if (!ic)
-     {
-        ic = elm_icon_add(parent);
-        evas_object_size_hint_weight_set(ic, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
-        evas_object_size_hint_align_set(ic, EVAS_HINT_FILL, EVAS_HINT_FILL);
-        elm_icon_standard_set(ic, path);
-        evas_object_show(ic);
-        if (wref) efl_wref_add(ic, wref);
-     }
-   return ic;
 }
 
 static Eo *
@@ -291,6 +268,9 @@ _table_dimensions_get(Instance *inst, unsigned int *rows, unsigned int *colums)
 static void
 _screenshot_mouse_in_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
+#if 1
+  (void)data;
+#else
   Session_Info *session = data;
   Instance *inst;
   E_Dialog *dialog;
@@ -301,7 +281,6 @@ _screenshot_mouse_in_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_U
 
   inst = efl_key_data_get(session->screenshot_icon, "instance");
   if (inst->screenshot_dialog) return;
-  PRINT("MOUSE IN\n");
 
   inst->screenshot_dialog = dialog = e_dialog_new(NULL, "E", "connman_request_input");
   if (!dialog) return;
@@ -329,17 +308,21 @@ _screenshot_mouse_in_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_U
 //  elm_win_center(dialog->win, 1, 1);
   elm_win_size_base_set(dialog->win, 0.8 * w, 0.8 * h);
   elm_win_borderless_set(dialog->win, EINA_TRUE);
+#endif
 }
 
 static void
 _screenshot_mouse_out_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
+#if 1
+  (void) data;
+#else
   Session_Info *session = data;
   Instance *inst = efl_key_data_get(session->screenshot_icon, "instance");
-  PRINT("MOUSE OUT\n");
 
   e_object_del(E_OBJECT(inst->screenshot_dialog));
   inst->screenshot_dialog = NULL;
+#endif
 }
 
 static void
@@ -445,9 +428,7 @@ _box_update(Instance *inst)
       }
       else
       {
-        char buf[1024];
-        snprintf(buf, sizeof(buf), "%s/not_available.png", e_module_dir_get(_module));
-        elm_image_file_set(session->screenshot_icon, buf, NULL);
+        elm_image_file_set(session->screenshot_icon, PREFIX"/share/"APP_NAME"/not_available.png", NULL);
       }
       o2 = _box_create(o, EINA_FALSE, NULL);
       elm_box_pack_end(o, o2);
@@ -494,7 +475,7 @@ _sessions_get_cb(void *data)
     mach->sessions_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_PIPE_READ | ECORE_EXE_PIPE_ERROR, mach);
     efl_wref_add(mach->sessions_get_exe, &(mach->sessions_get_exe));
 
-    efl_key_data_set(mach->sessions_get_exe, "eXpra_type", "sessions_get");
+    efl_key_data_set(mach->sessions_get_exe, "type", "sessions_get");
   }
 
   return EINA_TRUE;
@@ -521,7 +502,7 @@ _screenshot_get_cb(void *data)
     session->screenshot_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, session);
     efl_wref_add(session->screenshot_get_exe, &(session->screenshot_get_exe));
 
-    efl_key_data_set(session->screenshot_get_exe, "eXpra_type", "screenshot_get");
+    efl_key_data_set(session->screenshot_get_exe, "type", "screenshot_get");
   }
 
   return EINA_TRUE;
@@ -549,7 +530,7 @@ _cmd_end_cb(void *data, int _type EINA_UNUSED, void *event)
    Instance *inst = data;
    Ecore_Exe_Event_Del *event_info = (Ecore_Exe_Event_Del *)event;
    Ecore_Exe *exe = event_info->exe;
-   const char *type = efl_key_data_get(exe, "eXpra_type");
+   const char *type = efl_key_data_get(exe, "type");
 
    if (!type) return ECORE_CALLBACK_PASS_ON;
 
@@ -615,7 +596,7 @@ _cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
 {
    Ecore_Exe_Event_Data *event_data = (Ecore_Exe_Event_Data *)event;
    Ecore_Exe *exe = event_data->exe;
-   const char *type = efl_key_data_get(exe, "eXpra_type");
+   const char *type = efl_key_data_get(exe, "type");
 
    if (!type) return ECORE_CALLBACK_PASS_ON;
 
@@ -628,98 +609,24 @@ _cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
    return ECORE_CALLBACK_DONE;
 }
 
-static Instance *
-_instance_create()
-{
-   Instance *inst = calloc(1, sizeof(Instance));
-
-   return inst;
-}
-
-static void
-_instance_delete(Instance *inst)
-{
-   if (inst->o_icon) evas_object_del(inst->o_icon);
-
-   free(inst);
-}
-
-static void
-_popup_del(Instance *inst)
-{
-   E_FREE_FUNC(inst->popup, e_object_del);
-}
-
-static void
-_popup_del_cb(void *obj)
-{
-   _popup_del(e_object_data_get(obj));
-}
-
-static void
-_popup_comp_del_cb(void *data, Evas_Object *obj EINA_UNUSED)
-{
-   Instance *inst = data;
-
-   E_FREE_FUNC(inst->popup, e_object_del);
-}
-
-static void
-_button_cb_mouse_down(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info)
-{
-//   Instance *inst;
-   Evas_Event_Mouse_Down *ev;
-
-//   inst = data;
-   ev = event_info;
-
-   if (ev->button == 1)
-   {
-     Instance *inst = data;
-     if (!inst->popup)
-     {
-       Evas_Object *o;
-       inst->popup = e_gadcon_popup_new(inst->gcc, 0);
-
-       o = elm_box_add(e_comp->elm);
-       evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
-       evas_object_size_hint_weight_set(o, EVAS_HINT_EXPAND, 0.0);
-       evas_object_show(o);
-       efl_wref_add(o, &inst->main_box);
-
-       _box_update(inst);
-
-       e_gadcon_popup_content_set(inst->popup, inst->main_box);
-       e_comp_object_util_autoclose(inst->popup->comp_object,
-           _popup_comp_del_cb, NULL, inst);
-       e_gadcon_popup_show(inst->popup);
-       e_object_data_set(E_OBJECT(inst->popup), inst);
-       E_OBJECT_DEL_SET(inst->popup, _popup_del_cb);
-     }
-   }
-}
-
-static E_Gadcon_Client *
-_gc_init(E_Gadcon *gc, const char *name, const char *id, const char *style)
+int main(int argc, char **argv)
 {
    Instance *inst;
-   E_Gadcon_Client *gcc;
-   char buf[4096];
    Eina_List *itr;
    Eina_Stringshare *mach_name;
+   Eo *win;
+
+   ecore_init();
+   ecore_con_init();
+   ecore_con_url_init();
+   efreet_init();
+   elm_init(argc, argv);
+
+   elm_policy_set(ELM_POLICY_QUIT, ELM_POLICY_QUIT_LAST_WINDOW_CLOSED);
 
    _config_init();
-   snprintf(buf, sizeof(buf), "%s/icon.png", e_module_dir_get(_module));
 
-   inst = _instance_create();
-   inst->o_icon = _icon_create(gc->evas, buf, NULL);
-
-   gcc = e_gadcon_client_new(gc, name, id, style, inst->o_icon);
-   gcc->data = inst;
-   inst->gcc = gcc;
-
-   evas_object_event_callback_add(inst->o_icon, EVAS_CALLBACK_MOUSE_DOWN,
-				  _button_cb_mouse_down, inst);
+   inst = calloc(1, sizeof(Instance));
 
    ecore_event_handler_add(ECORE_EXE_EVENT_DATA, _cmd_output_cb, inst);
    ecore_event_handler_add(ECORE_EXE_EVENT_ERROR, _cmd_output_cb, inst);
@@ -737,93 +644,27 @@ _gc_init(E_Gadcon *gc, const char *name, const char *id, const char *style)
      inst->machs = eina_list_append(inst->machs, mach);
    }
 
-   return gcc;
-}
+   win = elm_win_add(NULL, "main", ELM_WIN_BASIC);
 
-static void
-_gc_shutdown(E_Gadcon_Client *gcc)
-{
-   _instance_delete(gcc->data);
+   inst->main_box = elm_box_add(win);
+   evas_object_size_hint_align_set(inst->main_box, EVAS_HINT_FILL, EVAS_HINT_FILL);
+   evas_object_size_hint_weight_set(inst->main_box, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
+   evas_object_show(inst->main_box);
+   elm_win_resize_object_add(win, inst->main_box);
+
+   _box_update(inst);
+
+   evas_object_show(win);
+
+   elm_run();
+
+   free(inst);
    _config_shutdown();
-}
 
-static void
-_gc_orient(E_Gadcon_Client *gcc, E_Gadcon_Orient orient EINA_UNUSED)
-{
-   e_gadcon_client_aspect_set(gcc, 32, 16);
-   e_gadcon_client_min_size_set(gcc, 32, 16);
-}
-
-static const char *
-_gc_label(const E_Gadcon_Client_Class *client_class EINA_UNUSED)
-{
-   return "eXpra";
-}
-
-static Evas_Object *
-_gc_icon(const E_Gadcon_Client_Class *client_class EINA_UNUSED, Evas *evas)
-{
-   char buf[4096];
-
-   if (!_module) return NULL;
-
-   snprintf(buf, sizeof(buf), "%s/icon.png", e_module_dir_get(_module));
-
-   return _icon_create(evas, buf, NULL);
-}
-
-static const char *
-_gc_id_new(const E_Gadcon_Client_Class *client_class)
-{
-   char buf[32];
-   static int id = 0;
-   sprintf(buf, "%s.%d", client_class->name, ++id);
-   return eina_stringshare_add(buf);
-}
-
-EAPI E_Module_Api e_modapi =
-{
-   E_MODULE_API_VERSION, "eXpra"
-};
-
-static const E_Gadcon_Client_Class _gc_class =
-{
-   GADCON_CLIENT_CLASS_VERSION, "eXpra",
-   {
-      _gc_init, _gc_shutdown, _gc_orient, _gc_label, _gc_icon, _gc_id_new, NULL, NULL
-   },
-   E_GADCON_CLIENT_STYLE_PLAIN
-};
-
-EAPI void *
-e_modapi_init(E_Module *m)
-{
-   ecore_init();
-   ecore_con_init();
-   ecore_con_url_init();
-   efreet_init();
-
-   _module = m;
-   e_gadcon_provider_register(&_gc_class);
-
-   return m;
-}
-
-EAPI int
-e_modapi_shutdown(E_Module *m EINA_UNUSED)
-{
-   e_gadcon_provider_unregister(&_gc_class);
-
-   _module = NULL;
+   elm_shutdown();
    efreet_shutdown();
    ecore_con_url_shutdown();
    ecore_con_shutdown();
    ecore_shutdown();
-   return 1;
 }
 
-EAPI int
-e_modapi_save(E_Module *m EINA_UNUSED)
-{
-   return 1;
-}

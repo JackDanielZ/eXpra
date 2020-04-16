@@ -7,5 +7,4 @@
 # command after changing this file, to see if there are
 # any tracked files which get ignored after the change.
 #
-src/module.so
-src/e_mod_main.o
+build/

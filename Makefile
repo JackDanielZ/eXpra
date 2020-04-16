@@ -1,23 +1,21 @@
-default: install
+APP_NAME = eXpra
+PREFIX = /opt/mine
+
+default: build/$(APP_NAME)
 
 CFLAGS := -Wall -Wextra -Wshadow -Wno-type-limits -g3 -O0 -Wpointer-arith -fvisibility=hidden
 
-prefix:=$(shell pkg-config --variable=prefix enlightenment)
-release=$(shell pkg-config --variable=release enlightenment)
-host_cpu=$(shell uname -m)
-MODULE_ARCH="linux-gnu-$(host_cpu)-$(release)"
+CFLAGS += -DAPP_NAME=\"$(APP_NAME)\" -DPREFIX=\"$(PREFIX)\"
 
-src/e_mod_main.o: src/e_mod_main.c
-	gcc -fPIC -g -c src/e_mod_main.c $(CFLAGS) `pkg-config --cflags enlightenment elementary` -o src/e_mod_main.o
+build/$(APP_NAME): main.c
+	mkdir -p $(@D)
+	gcc -g $^ $(CFLAGS) `pkg-config --cflags --libs elementary` -o $@
 
-src/module.so: src/e_mod_main.o
-	gcc -shared -fPIC -DPIC src/e_mod_main.o `pkg-config --libs enlightenment elementary` -Wl,-soname -Wl,module.so -o src/module.so
-
-install: src/module.so
-	sudo mkdir -p $(prefix)'/lib/enlightenment/modules/eXpra/'$(MODULE_ARCH)
-	sudo install -c src/module.so $(prefix)/lib/enlightenment/modules/eXpra/$(MODULE_ARCH)/module.so
-	sudo install -c module.desktop $(prefix)/lib/enlightenment/modules/eXpra/module.desktop
-	sudo install -c -m 644 images/* $(prefix)/lib/enlightenment/modules/eXpra
+install: build/$(APP_NAME)
+	mkdir -p $(PREFIX)/bin
+	mkdir -p $(PREFIX)/share/$(APP_NAME)
+	install -c build/$(APP_NAME) $(PREFIX)/bin/
+	install -c -m 644 images/* $(PREFIX)/share/$(APP_NAME)
 
 clean:
-	rm -rf src/module.so src/e_mod_main.o
+	rm -rf build/
