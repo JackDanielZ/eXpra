@@ -27,11 +27,15 @@ typedef struct
    Eina_Tmpstr *screenshot_tmp_file;
    Ecore_Exe *screenshot_get_exe;
    Ecore_Timer *screenshot_timer;
+   Eina_Strbuf *screenshot_get_buffer;
    Ecore_Exe *attach_exe;
 
    Eo *screenshot_icon;
    Eo *attach_bt;
    Eo *detach_bt;
+
+   int screenshot_w;
+   int screenshot_h;
 
    Eina_Bool screenshot_available :1;
    Eina_Bool to_delete :1;
@@ -179,6 +183,7 @@ _image_create(Eo *parent, const char *path, Eo **wref)
      evas_object_size_hint_align_set(o, EVAS_HINT_FILL, EVAS_HINT_FILL);
      evas_object_size_hint_aspect_set(o, EVAS_ASPECT_CONTROL_BOTH, 1, 1);
      elm_image_preload_disabled_set(o, EINA_FALSE);
+     elm_image_aspect_fixed_set(o, EINA_TRUE);
      if (path) elm_image_file_set(o, path, NULL);
      if (wref) efl_wref_add(o, wref);
      evas_object_show(o);
@@ -268,61 +273,63 @@ _table_dimensions_get(Instance *inst, unsigned int *rows, unsigned int *colums)
 static void
 _screenshot_mouse_in_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
-#if 1
-  (void)data;
-#else
   Session_Info *session = data;
   Instance *inst;
-  E_Dialog *dialog;
   Evas *evas;
   Evas_Object *img;
-  int mw, mh;
+  Eo *win;
+  int scr_w, scr_h;
   int w, h;
+  float ratio = 0.8;
 
   inst = efl_key_data_get(session->screenshot_icon, "instance");
-  if (inst->screenshot_dialog) return;
+  if (inst->screenshot_win) return;
 
-  inst->screenshot_dialog = dialog = e_dialog_new(NULL, "E", "connman_request_input");
-  if (!dialog) return;
+  inst->screenshot_win = win = elm_win_add(NULL, "main", ELM_WIN_BASIC);
+  if (!win) return;
 
-  e_dialog_resizable_set(dialog, 1);
+  img = _image_create(win, session->screenshot_tmp_file, NULL);
+  elm_win_resize_object_add(win, img);
 
-  e_dialog_title_set(dialog, "Input requested");
-  e_dialog_border_icon_set(dialog, "dialog-ask");
+  evas = evas_object_evas_get(win);
+  ecore_evas_screen_geometry_get(ecore_evas_ecore_evas_get(evas), NULL, NULL, &scr_w, &scr_h);
 
-  evas = evas_object_evas_get(dialog->win);
-  ecore_evas_screen_geometry_get(ecore_evas_ecore_evas_get(evas), NULL, NULL, &w, &h);
+  if (scr_w * ratio > session->screenshot_w && scr_h * ratio > session->screenshot_h)
+  {
+    w = session->screenshot_w;
+    h = session->screenshot_h;
+  }
+  else
+  {
+    int ratio_w, ratio_h;
+    ratio_w = (session->screenshot_w * 100) / scr_w;
+    ratio_h = (session->screenshot_h * 100) / scr_h;
+    if (ratio_w > ratio_h)
+    {
+      w = scr_w * ratio;
+      h = (w * session->screenshot_h) / session->screenshot_w;
+    }
+    else
+    {
+      h = scr_h * ratio;
+      w = (h * session->screenshot_w) / session->screenshot_h;
+    }
+  }
+  evas_object_move(win, (scr_w - w) / 2, (scr_h - h) / 2);
+  evas_object_resize(win, w, h);
+  evas_object_show(win);
 
-  img = e_widget_image_add_from_file(evas, session->screenshot_tmp_file, 0.8 * w, 0.8 * h);
-  evas_object_show(img);
-
-  e_widget_size_min_get(img, &mw, &mh);
-
-  if (mw < 260) mw = 260;
-  if (mh < 130) mh = 130;
-  e_dialog_content_set(dialog, img, mw, mh);
-
-  e_dialog_show(dialog);
-
-  e_dialog_button_focus_num(dialog, 0);
-//  elm_win_center(dialog->win, 1, 1);
-  elm_win_size_base_set(dialog->win, 0.8 * w, 0.8 * h);
-  elm_win_borderless_set(dialog->win, EINA_TRUE);
-#endif
+  elm_win_borderless_set(win, EINA_TRUE);
 }
 
 static void
 _screenshot_mouse_out_cb(void *data, Evas *e EINA_UNUSED, Evas_Object *obj EINA_UNUSED, void *event_info EINA_UNUSED)
 {
-#if 1
-  (void) data;
-#else
   Session_Info *session = data;
   Instance *inst = efl_key_data_get(session->screenshot_icon, "instance");
 
-  e_object_del(E_OBJECT(inst->screenshot_dialog));
-  inst->screenshot_dialog = NULL;
-#endif
+  evas_object_del(inst->screenshot_win);
+  inst->screenshot_win = NULL;
 }
 
 static void
@@ -499,7 +506,7 @@ _screenshot_get_cb(void *data)
 
     sprintf(cmd, "xpra screenshot %s ssh://%s/%d",
         session->screenshot_tmp_file, session->machine_name, session->id);
-    session->screenshot_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_NONE, session);
+    session->screenshot_get_exe = ecore_exe_pipe_run(cmd, ECORE_EXE_PIPE_READ | ECORE_EXE_PIPE_ERROR, session);
     efl_wref_add(session->screenshot_get_exe, &(session->screenshot_get_exe));
 
     efl_key_data_set(session->screenshot_get_exe, "type", "screenshot_get");
@@ -520,6 +527,7 @@ _find_session_in_machine_by_id(Machine_Info *mach, unsigned int id)
   s = calloc(1, sizeof(Session_Info));
   s->id = id;
   s->machine_name = eina_stringshare_add(mach->name);
+  s->screenshot_get_buffer = eina_strbuf_new();
   mach->sessions = eina_list_append(mach->sessions, s);
   return s;
 }
@@ -584,9 +592,16 @@ _cmd_end_cb(void *data, int _type EINA_UNUSED, void *event)
      Session_Info *session = ecore_exe_data_get(exe);
      if (event_info->exit_code == 0)
      {
+       const char *str = eina_strbuf_string_get(session->screenshot_get_buffer);
+       char *p = strstr(str, "screenshot");
+       if (p)
+       {
+         sscanf(p, "screenshot %dx%d", &session->screenshot_w, &session->screenshot_h);
+       }
        elm_image_file_set(session->screenshot_icon, session->screenshot_tmp_file, NULL);
        session->screenshot_available = EINA_TRUE;
      }
+     eina_strbuf_reset(session->screenshot_get_buffer);
    }
    return ECORE_CALLBACK_DONE;
 }
@@ -604,6 +619,11 @@ _cmd_output_cb(void *data EINA_UNUSED, int _type EINA_UNUSED, void *event)
    {
      Machine_Info *mach = ecore_exe_data_get(exe);
      eina_strbuf_append(mach->sessions_get_buffer, event_data->data);
+   }
+   else if (!strcmp(type, "screenshot_get"))
+   {
+     Session_Info *session = ecore_exe_data_get(exe);
+     eina_strbuf_append(session->screenshot_get_buffer, event_data->data);
    }
 
    return ECORE_CALLBACK_DONE;
