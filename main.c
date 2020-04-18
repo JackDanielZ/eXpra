@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <ctype.h>
 #include <syslog.h>
+#include <getopt.h>
 
 #include <Eina.h>
 #include <Ecore.h>
@@ -635,6 +636,16 @@ int main(int argc, char **argv)
    Eina_List *itr;
    Eina_Stringshare *mach_name;
    Eo *win, *bg;
+   static int is_socket = 0;
+
+   static struct option long_options[] =
+   {
+     /* These options set a flag. */
+     {"socket", no_argument, &is_socket, 1},
+     {0, 0, 0, 0}
+   };
+
+   getopt_long (argc, argv, "", long_options, NULL);
 
    ecore_init();
    ecore_con_init();
@@ -664,7 +675,21 @@ int main(int argc, char **argv)
      inst->machs = eina_list_append(inst->machs, mach);
    }
 
-   win = elm_win_add(NULL, "main", ELM_WIN_SOCKET_IMAGE);
+   if (is_socket == 1)
+   {
+     win = elm_win_add(NULL, "main", ELM_WIN_SOCKET_IMAGE);
+
+     if (!elm_win_socket_listen(win, "ezplug@" APP_NAME, 0, EINA_FALSE))
+     {
+       printf("Fail to elm win socket listen \n");
+       evas_object_del(win);
+       goto exit;
+     }
+   }
+   else
+   {
+     win = elm_win_add(NULL, "main", ELM_WIN_BASIC);
+   }
 
    bg = elm_bg_add(win);
    evas_object_size_hint_weight_set(bg, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
@@ -672,12 +697,6 @@ int main(int argc, char **argv)
    evas_object_show(bg);
    elm_win_resize_object_add(win, bg);
 
-   if (!elm_win_socket_listen(win, "ezplug@" APP_NAME, 0, EINA_FALSE))
-     {
-        printf("Fail to elm win socket listen \n");
-        evas_object_del(win);
-        goto exit;
-     }
    elm_win_autodel_set(win, EINA_TRUE);
 
    inst->main_box = elm_box_add(win);

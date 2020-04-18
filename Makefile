@@ -7,7 +7,7 @@ CFLAGS := -Wall -Wextra -Wshadow -Wno-type-limits -g3 -O0 -Wpointer-arith -fvisi
 
 CFLAGS += -DAPP_NAME=\"$(APP_NAME)\" -DPREFIX=\"$(PREFIX)\"
 
-EZPLUG_FLAGS := APP_NAME=$(APP_NAME) ICON_PATH=$(PREFIX)/share/$(APP_NAME)/icon.png BIN_CMD=$(PREFIX)/bin/$(APP_NAME)
+EZPLUG_FLAGS := APP_NAME=$(APP_NAME) ICON_PATH=$(PREFIX)/share/$(APP_NAME)/icon.png BIN_CMD="$(PREFIX)/bin/$(APP_NAME)\ --socket"
 
 build/$(APP_NAME): main.c
 	mkdir -p $(@D)
